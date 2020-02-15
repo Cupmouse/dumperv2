@@ -14,7 +14,7 @@ class Writer():
         self.url = url
         
         self.stream = None
-        self.time_opened = None
+        self.min_opened = None
         self.last_time = 0
 
         self.logger = logging.getLogger('writer')
@@ -38,10 +38,10 @@ class Writer():
 
         # convert from nanosec to sec
         time_sec = time // 1_000_000_000
-        # calculate hour in day
-        time_hour = (time_sec // 3600) % 24
+        # calculate mins in unixtime
+        time_min = time_sec // 60
 
-        if (self.stream == None) or (self.time_opened.hour != time_hour):
+        if (self.stream == None) or (self.min_opened != time_min):
             # if this is the first time
             # or
             # make new file each hour (to cut seeking time on read) 
@@ -57,9 +57,7 @@ class Writer():
             self.logger.info('making new file')
 
             # this is the first time, open new file
-            time_datetime = datetime.datetime.utcfromtimestamp(time_sec)
-            time_str = time_datetime.strftime('%Y_%m_%d_%H_%M_%S')
-            file_path = os.path.join(self.directory, '%s_%s.gz' % (self.prefix, time_str))
+            file_path = os.path.join(self.directory, '%s_%d.gz' % (self.prefix, time))
             
             # make directories if not exist
             if not os.path.exists(self.directory):
@@ -69,7 +67,7 @@ class Writer():
             self.stream = gzip.open(file_path, 'at')
 
             # record the time opened
-            self.time_opened = time_datetime
+            self.min_opened = time_min
 
             if is_first_time:
                 # write start line
