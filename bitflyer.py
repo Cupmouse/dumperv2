@@ -13,6 +13,30 @@ BITFLYER_CHANNEL_PREFIXES = [
     'lightning_ticker_',
 ]
 
+class BitflyerChannelAnalyzer:
+    def __init__(self):
+        self.idvch = dict()
+
+    def send(self, message: str):
+        obj = json.loads(message)
+        # id is rpc id, response to this only contains id so we need this later
+        self.idvch[obj['id']] = obj['params']['channel']
+
+        return self.idvch[obj['id']]
+
+    def msg(self, message: str):
+        obj = json.loads(message)
+
+        if 'method' in obj:
+            if obj['method'] == 'channelMessage':
+                # normal channel message
+                return obj['params']['channel']
+            else:
+                return dumpv2.CHANNEL_UNKNOWN
+        else:
+            # response to subscribe
+            return self.idvch[obj['id']]
+
 def subscribe_gen():
     product_codes = None
 
@@ -49,7 +73,8 @@ def subscribe_gen():
 
 def gen():
     subscribe = subscribe_gen()
-    return dumpv2.WebSocketDumper(DIR, 'bitflyer', 'wss://ws.lightstream.bitflyer.com/json-rpc', subscribe)
+    channel_analyzer = BitflyerChannelAnalyzer()
+    return dumpv2.WebSocketDumper(DIR, 'bitflyer', 'wss://ws.lightstream.bitflyer.com/json-rpc', subscribe, channel_analyzer)
 
 def main():
     dumpv2.Reconnecter(gen).do()

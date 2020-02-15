@@ -95,9 +95,44 @@ def subscribe_gen():
 
     return subscribe
 
+class BitfinexChannelAnalyzer:
+    def __init__(self):
+        # map of id versus channel
+        self.idvch = dict()
+
+    def send(self, message: str):
+        obj = json.loads(message)
+        return '%s_%s' % (obj['channel'], obj['symbol'])
+
+    def msg(self, message: str):
+        obj = json.loads(message)
+
+        if type(obj) == dict:
+            if obj['event'] == 'subscribed':
+                # response to subscribe
+                event_channel = obj['channel']
+                symbol = obj['symbol']
+                chanId = obj['chanId']
+
+                self.idvch[chanId] = '%s_%s' % (event_channel, symbol)
+                
+                return self.idvch[chanId]
+
+            elif obj['event'] == 'info':
+                # information message
+                return 'info'
+            else:
+                return dumpv2.CHANNEL_UNKNOWN
+        else:
+            # obj must be an array
+            # normal channel message
+            chanId = obj[0]
+            return self.idvch[chanId]
+
 def gen():
     subscribe = subscribe_gen()
-    return dumpv2.WebSocketDumper(DIR, 'bitflyer', 'wss://api-pub.bitfinex.com/ws/2', subscribe)
+    channel_analyzer = BitfinexChannelAnalyzer()
+    return dumpv2.WebSocketDumper(DIR, 'bitfinex', 'wss://api-pub.bitfinex.com/ws/2', subscribe, channel_analyzer)
 
 def main():
     dumpv2.Reconnecter(gen).do()

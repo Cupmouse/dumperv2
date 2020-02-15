@@ -7,6 +7,8 @@ import time
 import datetime
 import logging
 
+CHANNEL_UNKNOWN = '!unknown'
+
 class Writer():
     def __init__(self, directory: str, prefix: str, url: str):
         self.directory = directory
@@ -74,17 +76,22 @@ class Writer():
                 self.stream.write('start\t%d\t%s\n' % (time, self.url))
 
     """write message"""
-    def msg(self, msg: str, time: int):
+    def msg(self, msg: str, channel: str, time: int):
         time = self.no_time_backwards(time)
         self.open(time)
         # write a line
-        self.stream.writelines(['msg\t%d\t' % time, msg, '\n'])
+        self.stream.writelines(['msg\t%d\t%s\t' % (time, channel), msg, '\n'])
 
-    def send(self, msg: str, time: int):
+    def send(self, msg: str, channel: str, time: int):
         time = self.no_time_backwards(time)
         self.open(time)
         # write a line
-        self.stream.writelines(['send\t%d\t' % time, msg, '\n'])
+        self.stream.writelines(['send\t%d\t%s\t' % (time, channel), msg, '\n'])
+
+    def err(self, msg: str, time: int):
+        time = self.no_time_backwards(time)
+        self.open(time)
+        self.stream.writelines(['err\t%d\t' % time, msg, '\n'])
 
     def end(self, time: int):
         time = self.no_time_backwards(time)
@@ -98,10 +105,12 @@ class Writer():
 
 """dump WebSocket stream"""
 class WebSocketDumper:
-    def __init__(self, dir_dump: str, exchange: str, url: str, subscribe):
+    def __init__(self, dir_dump: str, exchange: str, url: str, subscribe, channel_analyzer):
         self.url = url
         # called when connected
         self.subscribe = subscribe
+        # analyze message and returns what channel it is
+        self.channel_analyzer = channel_analyzer
         
         # create new writer for this dumper
         self.writer = Writer(os.path.join(dir_dump, exchange), exchange, url)
@@ -112,7 +121,15 @@ class WebSocketDumper:
 
     def send(self, message: str):
         self.ws_app.send(message)
-        self.writer.send(message, time.time_ns())
+        timestamp = time.time_ns()
+        try:
+            channel = self.channel_analyzer.send(message)
+            if channel == CHANNEL_UNKNOWN:
+                self.logger.warning('unknown channel detected %s', message)
+            self.writer.send(message, channel, timestamp)
+        except Exception:
+            self.logger.exception('channel analyzer failed %s', message)
+            self.writer.send(message, CHANNEL_UNKNOWN, timestamp)
 
     def do(self):
         self.logger.info('Connecting to [%s]...' % self.url)
@@ -123,11 +140,22 @@ class WebSocketDumper:
             self.writer.end(time.time_ns())
 
         def on_message(ws, message):
-            self.writer.msg(message, time.time_ns())
+            timestamp = time.time_ns()
+            try:
+                channel = self.channel_analyzer.msg(message)
+                if channel == CHANNEL_UNKNOWN:
+                    self.logger.warning('unknown channel detected %s', message)
+                self.writer.msg(message, channel, timestamp)
+            except Exception:
+                self.logger.exception('channel analyzer failed %s', message)
+                self.writer.msg(message, CHANNEL_UNKNOWN, timestamp)
+
 
         def on_error(ws, error):
+            timestamp = time.time_ns()
             self.logger.error('Got WebSocket error [%s]:' % self.url)
             self.logger.error(error)
+            self.writer.err(str(error), timestamp)
 
             try:
                 ws.close()
