@@ -113,7 +113,7 @@ class WebSocketDumper:
         self.channel_analyzer = channel_analyzer
         
         # create new writer for this dumper
-        self.writer = Writer(os.path.join(dir_dump, exchange), exchange, url)
+        self.writer = Writer(dir_dump, exchange, url)
         # WebSocketApp for serving WebSocket stream
         self.ws_app = None
         
