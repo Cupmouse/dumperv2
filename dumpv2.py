@@ -46,7 +46,7 @@ class Writer():
         if (self.stream == None) or (self.min_opened != time_min):
             # if this is the first time
             # or
-            # make new file each hour (to cut seeking time on read) 
+            # make new file each minute (to cut seeking time on read) 
 
             # this shows if this is the first time
             is_first_time = self.stream == None
@@ -113,7 +113,7 @@ class WebSocketDumper:
         self.channel_analyzer = channel_analyzer
         
         # create new writer for this dumper
-        self.writer = Writer(dir_dump, exchange, url)
+        self.writer = Writer(os.path.join(dir_dump, exchange), exchange, url)
         # WebSocketApp for serving WebSocket stream
         self.ws_app = None
         
