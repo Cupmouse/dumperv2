@@ -43,7 +43,7 @@ def subscribe_gen():
     # get markets
     request = urllib.request.Request('https://api.bitflyer.com/v1/markets')
 
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=1) as response:
         markets = json.load(response)
 
         # response is like [{'product_code':'BTC_JPY'},{...}...]

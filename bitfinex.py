@@ -21,7 +21,7 @@ def subscribe_gen():
     sub_symbols = None
 
     request = urllib.request.Request('https://api.bitfinex.com/v2/tickers?symbols=ALL')
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=1) as response:
         tickers = json.load(response)
 
         # take only normal exchange symbol which starts from 't', not funding symbol, 'f'
