@@ -28,10 +28,9 @@ class BitflyerState:
         if channel.startswith('lightning_board_snapshot_'):
             # this is the partial orderbook, don't be confused, this is not a complete snapshot
             symbol = channel[len('lightning_board_snapshot_'):]
-            if symbol not in self.map:
-                memOrderbook = self.map[symbol] = dict()
-                memOrderbook['asks'] = dict()
-                memOrderbook['bids'] = dict()
+            memOrderbook = self.map[symbol] = dict()
+            memOrderbook['asks'] = dict()
+            memOrderbook['bids'] = dict()
 
             memOrderbook = self.map[symbol]
             memAsks = memOrderbook['asks']
