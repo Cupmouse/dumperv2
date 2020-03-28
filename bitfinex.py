@@ -11,6 +11,56 @@ logger = logging.getLogger('Bitfinex')
 # number of channels Bitfinex allows to open at maximum
 BITFINEX_CHANNEL_LIMIT = 30
 
+class BitfinexState():
+    def __init__(self):
+        self.orderbooks = dict()
+        self.channel_ids = dict()
+
+    def msg(self, channel: str, message: str):
+        obj = json.loads(message)
+        if 'event' in obj:
+            if obj['event'] == 'subscribed':
+                self.channel_ids[obj['chanId']] = '%s_%s' % (obj['channel'], obj['symbol'])
+        else:
+            # obj is array
+            chanId = obj[0]
+            channel = self.channel_ids[chanId]
+            if not channel.startswith('book'):
+                return
+            if type(obj[1]) == str and obj[1] == 'hb':
+                # heartbeat, ignore
+                return
+
+            if chanId not in self.orderbooks:
+                # first time to get data for this orderbook channel
+                self.orderbooks[chanId] = dict()
+            orderbook = self.orderbooks[chanId]
+
+            orders = obj[1]
+            if type(orders[0]) != list:
+                # if there is only one order, bitfinex api server will return
+                # only that order and bigger array is abbreviated
+                orders = [orders]
+            
+            for order in orders:
+                orderId = order[0]
+                price = order[1]
+                amount = order[2]
+                if price == 0:
+                    del orderbook[orderId]
+                else:
+                    orderbook[orderId] = { 'price': price, 'amount': amount }
+
+    def snapshot(self):
+        statuses = []
+        for chanId, orders in self.orderbooks.items():
+            constructed = []
+            for orderId, elem in sorted(orders.items(), key=lambda order: order[1]['price']):
+                constructed.append([orderId, elem['price'], elem['amount']])
+            statuses.append((self.channel_ids[chanId], json.dumps([chanId, constructed])))
+        return statuses
+
+
 def subscribe_gen():
     # before start dumping, bitfinex has too much currencies so it has channel limitation
     # we must cherry pick the best one to observe its trade
@@ -88,6 +138,10 @@ def subscribe_gen():
             ws.send(json.dumps(subscribe_obj))
 
         subscribe_obj['channel'] = 'book'
+        # set precision to raw
+        subscribe_obj['prec'] = 'R0'
+        # set limit to big number
+        subscribe_obj['len'] = '100'
 
         for symbol in sub_symbols:
             subscribe_obj['symbol'] = symbol
@@ -132,7 +186,8 @@ class BitfinexChannelAnalyzer:
 def gen():
     subscribe = subscribe_gen()
     channel_analyzer = BitfinexChannelAnalyzer()
-    return dumpv2.WebSocketDumper(DIR, 'bitfinex', 'wss://api-pub.bitfinex.com/ws/2', subscribe, channel_analyzer)
+    state = BitfinexState()
+    return dumpv2.WebSocketDumper(DIR, 'bitfinex', 'wss://api-pub.bitfinex.com/ws/2', subscribe, channel_analyzer, state)
 
 def main():
     dumpv2.Reconnecter(gen).do()

@@ -6,14 +6,20 @@ import gzip
 import time
 import datetime
 import logging
+import threading
+import queue
+import sys
 
 CHANNEL_UNKNOWN = '!unknown'
 
 class Writer():
-    def __init__(self, directory: str, prefix: str, url: str):
+    def __init__(self, directory: str, prefix: str, url: str, channel_analyzer, state):
         self.directory = directory
         self.prefix = prefix
         self.url = url
+        # analyze message and returns what channel it is
+        self.channel_analyzer = channel_analyzer
+        self.state = state
         
         self.stream = None
         self.min_opened = None
@@ -74,17 +80,41 @@ class Writer():
             if is_first_time:
                 # write start line
                 self.stream.write('start\t%d\t%s\n' % (time, self.url))
+            else:
+                if time_min % 10 == 0:
+                    # if this is not the first file and first digit of minute is 0, then
+                    # write state snapshot
+                    snapshot = self.state.snapshot()
+                    for (channel, state) in snapshot:
+                        self.stream.writelines(['state\t%s\t%s\t' % (time, channel), state, '\n'])
 
     """write message"""
-    def msg(self, msg: str, channel: str, time: int):
+    def msg(self, msg: str, time: int):
         time = self.no_time_backwards(time)
         self.open(time)
+        # get channel name
+        try:
+            channel = self.channel_analyzer.msg(msg)
+        except Exception:
+            self.logger.exception('channel analyzer failed %s', msg)
+            channel = CHANNEL_UNKNOWN
+        if channel == CHANNEL_UNKNOWN:
+            self.logger.warning('unknown channel detected %s', msg)
         # write a line
         self.stream.writelines(['msg\t%d\t%s\t' % (time, channel), msg, '\n'])
+        self.state.msg(channel, msg)
 
-    def send(self, msg: str, channel: str, time: int):
+    def send(self, msg: str, time: int):
         time = self.no_time_backwards(time)
         self.open(time)
+        # get channel name
+        try:
+            channel = self.channel_analyzer.send(msg)
+        except Exception:
+            self.logger.exception('channel analyzer failed %s', msg)
+            channel = CHANNEL_UNKNOWN
+        if channel == CHANNEL_UNKNOWN:
+            self.logger.warning('unknown channel detected %s', msg)
         # write a line
         self.stream.writelines(['send\t%d\t%s\t' % (time, channel), msg, '\n'])
 
@@ -103,17 +133,68 @@ class Writer():
         self.stream.flush()
         self.stream.close()
 
+class MultithreadedWriter(threading.Thread):
+    def __init__(self, directory: str, prefix: str, url: str, channel_analyzer, state):
+        super().__init__()
+        self.writer = Writer(directory, prefix, url, channel_analyzer, state)
+        self.queue = queue.Queue()
+        self.exception = None
+
+    # this runs in the different thread
+    def run_with_exception(self):
+        while True:
+            # this will block if there is no item in the queue until it become available
+            item = self.queue.get()
+            if item['type'] == "open":
+                self.writer.open(item['time'])
+            elif item['type'] == "msg":
+                self.writer.msg(item['msg'], item['time'])
+            elif item['type'] == "send":
+                self.writer.send(item['msg'], item['time'])
+            elif item['type'] == "err":
+                self.writer.err(item['msg'], item['time'])
+            elif item['type'] == "end":
+                self.writer.end(item['time'])
+                break # end this thread
+            self.queue.task_done()
+
+    # this runs in the different thread
+    def run(self):
+        try:
+            # Possibly throws an exception
+            self.run_with_exception()
+        except Exception as e:
+            self.exception = e
+
+    def open(self, time: int):
+        if self.exception != None: raise Exception("Error occurred on writer thread") from self.exception
+        self.queue.put({ 'type': "open", 'time': time })
+
+    def msg(self, msg: str, time: int):
+        if self.exception != None: raise Exception("Error occurred on writer thread") from self.exception
+        self.queue.put({ 'type': "msg", 'msg': msg,  'time': time })
+
+    def send(self, msg: str, time: int):
+        if self.exception != None: raise Exception("Error occurred on writer thread") from self.exception
+        self.queue.put({ 'type': "send", 'msg': msg, 'time': time })
+
+    def err(self, msg: str, time: int):
+        if self.exception != None: raise Exception("Error occurred on writer thread") from self.exception
+        self.queue.put({ 'type': "err", 'msg': msg, 'time': time })
+
+    def end(self, time: int):
+        if self.exception != None: raise Exception("Error occurred on writer thread") from self.exception
+        self.queue.put({ 'type': "end", 'time': time })
+
 """dump WebSocket stream"""
 class WebSocketDumper:
-    def __init__(self, dir_dump: str, exchange: str, url: str, subscribe, channel_analyzer):
+    def __init__(self, dir_dump: str, exchange: str, url: str, subscribe, channel_analyzer, state):
         self.url = url
         # called when connected
         self.subscribe = subscribe
-        # analyze message and returns what channel it is
-        self.channel_analyzer = channel_analyzer
         
         # create new writer for this dumper
-        self.writer = Writer(os.path.join(dir_dump, exchange), exchange, url)
+        self.writer = MultithreadedWriter(os.path.join(dir_dump, exchange), exchange, url, channel_analyzer, state)
         # WebSocketApp for serving WebSocket stream
         self.ws_app = None
         
@@ -123,13 +204,10 @@ class WebSocketDumper:
         self.ws_app.send(message)
         timestamp = time.time_ns()
         try:
-            channel = self.channel_analyzer.send(message)
-            if channel == CHANNEL_UNKNOWN:
-                self.logger.warning('unknown channel detected %s', message)
-            self.writer.send(message, channel, timestamp)
+            self.writer.send(message, timestamp)
         except Exception:
-            self.logger.exception('channel analyzer failed %s', message)
-            self.writer.send(message, CHANNEL_UNKNOWN, timestamp)
+            self.logger.exception('error on send')
+            self.ws_app.close()
 
     def do(self):
         self.logger.info('Connecting to [%s]...' % self.url)
@@ -142,13 +220,10 @@ class WebSocketDumper:
         def on_message(ws, message):
             timestamp = time.time_ns()
             try:
-                channel = self.channel_analyzer.msg(message)
-                if channel == CHANNEL_UNKNOWN:
-                    self.logger.warning('unknown channel detected %s', message)
-                self.writer.msg(message, channel, timestamp)
+                self.writer.msg(message, timestamp)
             except Exception:
-                self.logger.exception('channel analyzer failed %s', message)
-                self.writer.msg(message, CHANNEL_UNKNOWN, timestamp)
+                self.logger.exception("writer msg returned error")
+                ws.close()
 
 
         def on_error(ws, error):
@@ -173,6 +248,8 @@ class WebSocketDumper:
                     self.logger.exception('Encountered an error on subscribe')
                     ws.close()
 
+        # start the writer thread
+        self.writer.start()
         # Open connection to target WebSocket server
         self.ws_app = websocket.WebSocketApp(self.url,
                                                 on_open=on_open,
@@ -214,7 +291,7 @@ class Reconnecter:
 
             # wait seconds not to dead loop
             # wait if disconnected in less than 5 minites from connection
-            if ((time_connect - datetime.datetime.utcnow()) / datetime.timedelta(minutes=1) <= 5):
+            if ((datetime.datetime.utcnow() - time_connect) / datetime.timedelta(minutes=1) <= 5):
                 # wait
                 self.logger.warn('Waiting %d seconds...' % time_wait)
                 time.sleep(time_wait)
