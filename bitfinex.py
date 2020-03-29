@@ -43,20 +43,20 @@ class BitfinexState():
                 orders = [orders]
             
             for order in orders:
-                orderId = order[0]
-                price = order[1]
+                price = order[0]
+                count = order[1]
                 amount = order[2]
-                if price == 0:
-                    del orderbook[orderId]
+                if count == 0:
+                    del orderbook[price]
                 else:
-                    orderbook[orderId] = { 'price': price, 'amount': amount }
+                    orderbook[price] = { 'count': count, 'amount': amount }
 
     def snapshot(self):
         statuses = []
         for chanId, orders in self.orderbooks.items():
             constructed = []
-            for orderId, elem in sorted(orders.items(), key=lambda order: order[1]['price']):
-                constructed.append([orderId, elem['price'], elem['amount']])
+            for price, elem in sorted(orders.items()):
+                constructed.append([price, elem['count'], elem['amount']])
             statuses.append((self.channel_ids[chanId], json.dumps([chanId, constructed])))
         return statuses
 
@@ -139,7 +139,9 @@ def subscribe_gen():
 
         subscribe_obj['channel'] = 'book'
         # set precision to raw
-        subscribe_obj['prec'] = 'R0'
+        subscribe_obj['prec'] = 'P0'
+        # set frequency to the most frequent == realtime
+        subscribe_obj['freq'] = 'F0'
         # set limit to big number
         subscribe_obj['len'] = '100'
 
