@@ -13,23 +13,44 @@ BITFINEX_CHANNEL_LIMIT = 30
 
 class BitfinexState():
     def __init__(self):
+        # map of id versus channel
+        self.idvch = dict()
         self.orderbooks = dict()
-        self.channel_ids = dict()
 
-    def msg(self, channel: str, message: str):
+    def send(self, message: str):
         obj = json.loads(message)
-        if 'event' in obj:
+        return '%s_%s' % (obj['channel'], obj['symbol'])
+
+    def msg(self, message: str):
+        obj = json.loads(message)
+
+        if type(obj) == dict:
             if obj['event'] == 'subscribed':
-                self.channel_ids[obj['chanId']] = '%s_%s' % (obj['channel'], obj['symbol'])
+                # response to subscribe
+                event_channel = obj['channel']
+                symbol = obj['symbol']
+                chanId = obj['chanId']
+
+                channel = self.idvch[chanId] = '%s_%s' % (event_channel, symbol)
+                
+                return channel
+
+            elif obj['event'] == 'info':
+                # information message
+                return 'info'
+            else:
+                return dumpv2.CHANNEL_UNKNOWN
         else:
-            # obj is array
+            # obj must be an array
+            # normal channel message
             chanId = obj[0]
-            channel = self.channel_ids[chanId]
+            channel = self.idvch[chanId]
+
             if not channel.startswith('book'):
-                return
+                return channel
             if type(obj[1]) == str and obj[1] == 'hb':
                 # heartbeat, ignore
-                return
+                return channel
 
             if chanId not in self.orderbooks:
                 # first time to get data for this orderbook channel
@@ -51,14 +72,24 @@ class BitfinexState():
                 else:
                     orderbook[price] = { 'count': count, 'amount': amount }
 
+            return channel
+
+    # snapshot contains
+    # CHANNEL_SUBSCRIBED: a map of subscribed channel ids vs its name
+    # book_[symbol]: a snapshot of the orderbook of [symbol] in the raw format
     def snapshot(self):
-        statuses = []
-        for chanId, orders in self.orderbooks.items():
-            constructed = []
-            for price, elem in sorted(orders.items()):
-                constructed.append([price, elem['count'], elem['amount']])
-            statuses.append((self.channel_ids[chanId], json.dumps([chanId, constructed])))
-        return statuses
+        states = []
+        chvid = dict()
+        for chanId, channel in self.idvch.items():
+            chvid[channel] = chanId
+        states.append((dumpv2.CHANNEL_SUBSCRIBED, json.dumps(chvid)))
+
+        for chanId, memOrders in self.orderbooks.items():
+            orders = []
+            for price, elem in sorted(memOrders.items()):
+                orders.append([price, elem['count'], elem['amount']])
+            states.append((self.idvch[chanId], json.dumps(orders)))
+        return states
 
 
 def subscribe_gen():
@@ -151,45 +182,10 @@ def subscribe_gen():
 
     return subscribe
 
-class BitfinexChannelAnalyzer:
-    def __init__(self):
-        # map of id versus channel
-        self.idvch = dict()
-
-    def send(self, message: str):
-        obj = json.loads(message)
-        return '%s_%s' % (obj['channel'], obj['symbol'])
-
-    def msg(self, message: str):
-        obj = json.loads(message)
-
-        if type(obj) == dict:
-            if obj['event'] == 'subscribed':
-                # response to subscribe
-                event_channel = obj['channel']
-                symbol = obj['symbol']
-                chanId = obj['chanId']
-
-                self.idvch[chanId] = '%s_%s' % (event_channel, symbol)
-                
-                return self.idvch[chanId]
-
-            elif obj['event'] == 'info':
-                # information message
-                return 'info'
-            else:
-                return dumpv2.CHANNEL_UNKNOWN
-        else:
-            # obj must be an array
-            # normal channel message
-            chanId = obj[0]
-            return self.idvch[chanId]
-
 def gen():
     subscribe = subscribe_gen()
-    channel_analyzer = BitfinexChannelAnalyzer()
     state = BitfinexState()
-    return dumpv2.WebSocketDumper(DIR, 'bitfinex', 'wss://api-pub.bitfinex.com/ws/2', subscribe, channel_analyzer, state)
+    return dumpv2.WebSocketDumper(DIR, 'bitfinex', 'wss://api-pub.bitfinex.com/ws/2', subscribe, state)
 
 def main():
     dumpv2.Reconnecter(gen).do()

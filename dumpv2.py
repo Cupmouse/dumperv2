@@ -11,14 +11,14 @@ import queue
 import sys
 
 CHANNEL_UNKNOWN = '!unknown'
+CHANNEL_SUBSCRIBED = "!subscribed"
 
 class Writer():
-    def __init__(self, directory: str, prefix: str, url: str, channel_analyzer, state):
+    def __init__(self, directory: str, prefix: str, url: str, state):
         self.directory = directory
         self.prefix = prefix
         self.url = url
         # analyze message and returns what channel it is
-        self.channel_analyzer = channel_analyzer
         self.state = state
         
         self.stream = None
@@ -94,7 +94,7 @@ class Writer():
         self.open(time)
         # get channel name
         try:
-            channel = self.channel_analyzer.msg(msg)
+            channel = self.state.msg(msg)
         except Exception:
             self.logger.exception('channel analyzer failed %s', msg)
             channel = CHANNEL_UNKNOWN
@@ -102,14 +102,13 @@ class Writer():
             self.logger.warning('unknown channel detected %s', msg)
         # write a line
         self.stream.writelines(['msg\t%d\t%s\t' % (time, channel), msg, '\n'])
-        self.state.msg(channel, msg)
 
     def send(self, msg: str, time: int):
         time = self.no_time_backwards(time)
         self.open(time)
         # get channel name
         try:
-            channel = self.channel_analyzer.send(msg)
+            channel = self.state.send(msg)
         except Exception:
             self.logger.exception('channel analyzer failed %s', msg)
             channel = CHANNEL_UNKNOWN
@@ -134,9 +133,9 @@ class Writer():
         self.stream.close()
 
 class MultithreadedWriter(threading.Thread):
-    def __init__(self, directory: str, prefix: str, url: str, channel_analyzer, state):
+    def __init__(self, directory: str, prefix: str, url: str, state):
         super().__init__()
-        self.writer = Writer(directory, prefix, url, channel_analyzer, state)
+        self.writer = Writer(directory, prefix, url, state)
         self.queue = queue.Queue()
         self.exception = None
 
@@ -188,13 +187,13 @@ class MultithreadedWriter(threading.Thread):
 
 """dump WebSocket stream"""
 class WebSocketDumper:
-    def __init__(self, dir_dump: str, exchange: str, url: str, subscribe, channel_analyzer, state):
+    def __init__(self, dir_dump: str, exchange: str, url: str, subscribe, state):
         self.url = url
         # called when connected
         self.subscribe = subscribe
         
         # create new writer for this dumper
-        self.writer = MultithreadedWriter(os.path.join(dir_dump, exchange), exchange, url, channel_analyzer, state)
+        self.writer = MultithreadedWriter(os.path.join(dir_dump, exchange), exchange, url, state)
         # WebSocketApp for serving WebSocket stream
         self.ws_app = None
         
