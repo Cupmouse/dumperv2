@@ -98,6 +98,8 @@ class Writer():
         except Exception:
             self.logger.exception('channel analyzer failed %s', msg)
             channel = CHANNEL_UNKNOWN
+        if channel is None:
+            channel = CHANNEL_UNKNOWN
         if channel == CHANNEL_UNKNOWN:
             self.logger.warning('unknown channel detected %s', msg)
         # write a line
@@ -111,6 +113,8 @@ class Writer():
             channel = self.state.send(msg)
         except Exception:
             self.logger.exception('channel analyzer failed %s', msg)
+            channel = CHANNEL_UNKNOWN
+        if channel is None:
             channel = CHANNEL_UNKNOWN
         if channel == CHANNEL_UNKNOWN:
             self.logger.warning('unknown channel detected %s', msg)

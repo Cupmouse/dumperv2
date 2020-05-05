@@ -7,7 +7,8 @@ import websocket
 class BitmexState:
     def __init__(self):
         self.subscribed = list()
-        self.map = dict()
+        self.orderbooks = dict()
+        self.instruments = dict()
 
     def send(self, message: str):
         pass
@@ -17,22 +18,60 @@ class BitmexState:
 
         if 'table' in obj:
             channel = obj['table']
-            if channel != 'orderBookL2':
-                return channel
 
-            if obj['action'] == 'partial' or obj['action'] == 'insert':
-                for elem in obj['data']:
-                    key = (elem['symbol'], elem['side'], elem['id'])
-                    self.map[key] = { 'price': elem['price'], 'size': elem['size'] }
-            elif obj['action'] == 'update':
-                for elem in obj['data']:
-                    key = (elem['symbol'], elem['side'], elem['id'])
-                    before = self.map[key]
-                    self.map[key] = { 'price': before['price'], 'size': elem['size'] }
-            elif obj['action'] == 'delete':
-                for elem in obj['data']:
-                    key = (elem['symbol'], elem['side'], elem['id'])
-                    del self.map[key]
+            if channel == 'orderBookL2':
+                if obj['action'] == 'partial' or obj['action'] == 'insert':
+                    # orderbook snapshot
+                    for elem in obj['data']:
+                        dueToRemove = set()
+                        if elem['side'] == 'Sell':
+                            for memKey in self.orderbooks:
+                                if memKey[0] == elem['symbol'] \
+                                    and memKey[1] == 'Buy' \
+                                    and self.orderbooks[memKey]['price'] >= elem['price']:
+                                    dueToRemove.add(memKey)
+                        else:
+                            for memKey in self.orderbooks:
+                                if memKey[0] == elem['symbol'] \
+                                    and memKey[1] == 'Sell' \
+                                    and self.orderbooks[memKey]['price'] <= elem['price']:
+                                    dueToRemove.add(memKey)
+
+                        for remove in dueToRemove:
+                            print(remove, self.orderbooks[remove])
+                            del self.orderbooks[remove]
+
+                        key = (elem['symbol'], elem['side'], elem['id'])
+                        self.orderbooks[key] = { 'price': elem['price'], 'size': elem['size'] }
+
+                elif obj['action'] == 'update':
+                    # update order size
+                    for elem in obj['data']:
+                        key = (elem['symbol'], elem['side'], elem['id'])
+                        if key not in self.orderbooks:
+                            # key is not in the orderbook
+                            continue
+                        before = self.orderbooks[key]
+                        self.orderbooks[key] = { 'price': before['price'], 'size': elem['size'] }
+                elif obj['action'] == 'delete':
+                    # delete order from orderbook
+                    for elem in obj['data']:
+                        key = (elem['symbol'], elem['side'], elem['id'])
+                        if key in self.orderbooks:
+                            del self.orderbooks[key]
+            elif channel == 'instrument':
+                if obj['action'] == 'partial':
+                    for elem in obj['data']:
+                        # just store the whole element to dict key as symbol
+                        self.instruments[elem['symbol']] = elem
+                elif obj['action'] == 'update':
+                    for elem in obj['data']:
+                        # update value of element of instrument dict
+                        # do not replace the entire object
+                        for key, value in elem.items():
+                            # sometimes, bitmex does not send insert/partial for instruemnts
+                            if elem['symbol'] in self.instruments:
+                                self.instruments[elem['symbol']][key] = value
 
             return channel
 
@@ -53,11 +92,18 @@ class BitmexState:
 
     def snapshot(self):
         states = []
+        # subscribed snapshot
         states.append((dumpv2.CHANNEL_SUBSCRIBED, json.dumps(self.subscribed)))
+        # orderbook snapshot
         data = []
-        for (symbol, side, id), elem in self.map.items():
+        for (symbol, side, id), elem in self.orderbooks.items():
             data.append({ 'symbol': symbol, 'side': side, 'id': id, 'price': elem['price'], 'size': elem['size'] })
         states.append(('orderBookL2', json.dumps(data)))
+
+        # instrument snapshot
+        # symbol key of dict is only for updating
+        # symbol is also included in the value of dict
+        states.append(('instrument', json.dumps(list(self.instruments.values()))))
         return states
 
 

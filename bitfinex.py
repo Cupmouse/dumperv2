@@ -38,6 +38,8 @@ class BitfinexState():
             elif obj['event'] == 'info':
                 # information message
                 return 'info'
+            elif obj['event'] == 'error':
+                return '%s_%s' % (obj['channel'], obj['symbol'])
             else:
                 return dumpv2.CHANNEL_UNKNOWN
         else:
@@ -58,6 +60,10 @@ class BitfinexState():
             orderbook = self.orderbooks[chanId]
 
             orders = obj[1]
+            # no orders, probably because maintainance
+            if len(orders) == 0:
+                return channel
+
             if type(orders[0]) != list:
                 # if there is only one order, bitfinex api server will return
                 # only that order and bigger array is abbreviated
@@ -68,10 +74,25 @@ class BitfinexState():
                 count = order[1]
                 amount = order[2]
                 if count == 0:
-                    del orderbook[price]
+                    if price in orderbook:
+                        del orderbook[price]
                 else:
-                    orderbook[price] = { 'count': count, 'amount': amount }
+                    # remove all orders with logical error
+                    dueToRemove = set()
+                    if amount < 0:
+                        for memPrice in orderbook:
+                            if memPrice >= price and orderbook[memPrice]['amount'] >= 0:
+                                dueToRemove.add(memPrice)
+                    else:
+                        for memPrice in orderbook:
+                            if memPrice <= price and orderbook[memPrice]['amount'] <= 0:
+                                dueToRemove.add(memPrice)
 
+                    for remove in dueToRemove:
+                        del orderbook[remove]
+
+                    orderbook[price] = { 'count': count, 'amount': amount }
+                    
             return channel
 
     # snapshot contains

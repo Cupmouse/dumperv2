@@ -42,16 +42,18 @@ class BitflyerState:
                     return channel
 
                 if channel.startswith('lightning_board_snapshot_'):
+                    pair = channel[len('lightning_board_snapshot_'):]
                     # this is the partial orderbook, don't be confused, this is not a complete snapshot
-                    memOrderbook = self.map[channel] = dict()
+                    memOrderbook = self.map[pair] = dict()
                     memAsks = memOrderbook['asks'] = dict()
                     memBids = memOrderbook['bids'] = dict()
                 elif channel.startswith('lightning_board_'):
+                    pair = channel[len('lightning_board_'):]
                     # orderbook change apply it to current orderbook in memory
-                    if channel not in self.map:
+                    if pair not in self.map:
                         # bitflyer sends board change even if snapshot is not yet given ignore this
-                        return
-                    memOrderbook = self.map[channel]
+                        return channel
+                    memOrderbook = self.map[pair]
                     memAsks = memOrderbook['asks']
                     memBids = memOrderbook['bids']
 
@@ -92,16 +94,11 @@ class BitflyerState:
 
         states.append((dumpv2.CHANNEL_SUBSCRIBED, json.dumps(self.subscribed)))
 
-        for channel, orderbook in self.map.items():
-            symbol = ""
-            if channel.startswith("lightning_board_snapshot_"):
-                symbol = channel[len("lightning_board_snapshot_"):]
-            else:
-                symbol = channel[len("lightning_board_"):]
+        for pair, orderbook in self.map.items():
             message = dict()
             message['asks'] = [ { 'price': price, 'size': size } for price, size in sorted(orderbook['asks'].items()) ]
             message['bids'] = [ { 'price': price, 'size': size } for price, size in sorted(orderbook['bids'].items(), reverse=True) ]
-            states.append(('lightning_board_snapshot_%s' % symbol, json.dumps(message)))
+            states.append(('lightning_board_snapshot_%s' % pair, json.dumps(message)))
         return states
 
 
